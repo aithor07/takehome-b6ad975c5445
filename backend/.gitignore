@@ -1,0 +1,35 @@
+# Entorno virtual
+.venv/
+venv/
+ENV/
+
+#Claves de entorno
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*secret*
+*credentials*
+
+#Cache y archivos temporales
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+#Cache de uv
+.uv/
+
+#Archivos de configuración de IDEs
+.vscode/
+.DS_Store
+.idea/
+
+#Base de datos
+*.sqlite3
+*.db
+*.sqlite

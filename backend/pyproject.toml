@@ -1,0 +1,26 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Backend para interpretar peticiones de late checkout con IA"
+readme = "README.md"
+authors = [
+    { name = "Aithor", email = "aithorjose07@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.143.1",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.16.0",
+    "sqlmodel>=0.0.48",
+    "tenacity>=9.2.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
