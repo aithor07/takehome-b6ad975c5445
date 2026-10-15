@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 
 from app.database import create_db_and_tables
+from app.sessions import AppError
 import app.models #Para que SQLModel registre las tablas
 
 @asynccontextmanager
@@ -17,6 +19,19 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+#Manejador global para expeciones de tipo AppError
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    #401 añadimos WWW-Authenticate: Bearer
+    headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+        headers=headers
+    )
+
+
 
 # Configuración de CORS
 app.add_middleware(

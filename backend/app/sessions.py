@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from app.config import settings
 import json
 from pathlib import Path
-from typing import Optional
-from fastapi import Depends, Header
+from typing import Optional, Annotated
+from fastapi import Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 
 
@@ -78,28 +79,32 @@ def load_sessions(path: Path = DEFAULT_IDENTITIES_PATH) -> dict[str, SessionIden
 
 
 SESSIONS: dict[str, SessionIdentity] = load_sessions()
+#Esquema de seguridad estandar de fastapi, bien documentado. auto_error=False para resolver con mis excepciones
+bearer_scheme = HTTPBearer(auto_error=False)
 
-
-def get_current_session(authorization: Optional[str] = Header(default=None)) -> SessionIdentity:
-    #Extrae y valida el bearer token de la petición
-    if not authorization or not authorization.startswith("Bearer "):
-        raise AppError(401, "unauthorized", "Falta el encabezado Authorization Bearer o tiene formato invalido")
-    token = authorization.removeprefix("Bearer ").strip() #Quitar el prefijo
+def resolve_session_token(token: Optional[str]) -> SessionIdentity:
+    #Token -> Identidad. No depende de fastapi
     if not token:
-        raise AppError(401, "unauthorized", "El token de sesion esta vacio")
+        raise AppError(401, "unauthorized", "Falta el token Bearer o tiene formato invalido")
     session = SESSIONS.get(token)
     if session is None:
         raise AppError(401, "invalid_token", "Sesion no reconocida")
     return session
 
-#Con Depends(get_current_session) estas dos funciones reutilizan la logica de validacion de sesion.
-def require_guest(session: SessionIdentity = Depends(get_current_session)) -> SessionIdentity:
+
+def get_current_session(credentials: Annotated[Optional[HTTPAuthorizationCredentials], Security(bearer_scheme)]) -> SessionIdentity:
+    #HTTPBearer ya quita automaticamente el prefijo Bearer, solo llega el token
+    token = credentials.credentials if credentials else None
+    return resolve_session_token(token)
+
+#Uso Security(get_current_session) para reutilizar logica de validacion
+def require_guest(session: Annotated[SessionIdentity, Security(get_current_session)]) -> SessionIdentity:
     #Exigir que la sesion sea de un huesped
     if session.role != "guest":
         raise AppError(403, "forbidden", "Operación solo permitida para huespedes")
     return session
 
-def require_manager(session: SessionIdentity = Depends(get_current_session)) -> SessionIdentity:
+def require_manager(session: Annotated[SessionIdentity, Security(get_current_session)]) -> SessionIdentity:
     #Exigir sesion de manager
     if session.role != "manager":
         raise AppError(403, "forbidden", "Esta operacion requiere de permisos de manager")
