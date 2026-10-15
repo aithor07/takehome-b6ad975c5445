@@ -1,0 +1,40 @@
+{
+  "note": "Sesiones ficticias locales de la aplicación. Las claves del servicio remoto de reservas se facilitan aparte; no coinciden con estos códigos.",
+  "identities": [
+    {
+      "token": "guest-a1",
+      "role": "guest",
+      "org_id": "org-coral",
+      "hotel_id": "hotel-alba",
+      "stay_id": "STAY-A1"
+    },
+    {
+      "token": "guest-a2",
+      "role": "guest",
+      "org_id": "org-coral",
+      "hotel_id": "hotel-alba",
+      "stay_id": "STAY-A2"
+    },
+    {
+      "token": "guest-b1",
+      "role": "guest",
+      "org_id": "org-brisa",
+      "hotel_id": "hotel-alba-b",
+      "stay_id": "STAY-B1"
+    },
+    {
+      "token": "manager-a",
+      "role": "manager",
+      "org_id": "org-coral",
+      "hotel_id": "hotel-alba",
+      "stay_id": null
+    },
+    {
+      "token": "manager-b",
+      "role": "manager",
+      "org_id": "org-brisa",
+      "hotel_id": "hotel-alba-b",
+      "stay_id": null
+    }
+  ]
+}

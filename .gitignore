@@ -11,6 +11,7 @@ ENV/
 *.pem
 *secret*
 *credentials*
+.env.example
 
 #Cache y archivos temporales
 __pycache__/
