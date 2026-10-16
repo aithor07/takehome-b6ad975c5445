@@ -10,7 +10,6 @@ descarta explícitamente: la IA no concede permisos, precio ni aprobación.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import time
@@ -18,6 +17,12 @@ from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
 import httpx
+from tenacity import (
+    AsyncRetrying,
+    RetryCallState,
+    retry_if_exception,
+    stop_after_attempt,
+)
 
 from app.config import WORKFACTORY_USER_AGENT, settings
 
@@ -30,19 +35,50 @@ _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 # Códigos que merecen reintento limitado (fallo temporal).
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
+# Tope en segundos para la espera entre reintentos.
+_MAX_WAIT = 5.0
+
 
 class AIServiceError(Exception):
     """Fallo temporal o de transporte al llamar a la IA (reintentable)."""
-    def __init__(self, message: str, *, code: str = "ai_unavailable") -> None:
+    def __init__(self, message: str, *, code: str = "ai_unavailable", retryable: bool = True, retry_after: float | None = None) -> None:
         super().__init__(message)
         self.code = code
-
+        self.retryable = retryable #tenacity solo reintenta si sigue en True
+        self.retry_after = retry_after #segundos del header Retry-After
 
 
 class AIInvalidOutput(AIServiceError):
     """La IA respondió algo inutilizable (no reintentable: hay que validar)."""
     def __init__(self, message, *, code = "ai_invalid_output") -> None:
-        super().__init__(message, code=code)
+        # No reintentable: repetir la llamada no arregla una salida inválida.
+        super().__init__(message, code=code, retryable=False)
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    # Lee Retry-After en segundos; None si no viene o no es numérica.
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    # Predicado de tenacity: solo reintenta errores propios marcados como retryable.
+    # AIInvalidOutput hereda de AIServiceError pero queda fuera (retryable=False).
+    return isinstance(exc, AIServiceError) and exc.retryable
+
+
+def _wait(retry_state: RetryCallState) -> float:
+    # Espera entre intentos: respeta Retry-After si viene; si no, backoff exponencial.
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        return min(float(retry_after), _MAX_WAIT)
+    return min(0.5 * (2 ** (retry_state.attempt_number - 1)), 4.0)
 
 
 @dataclass
@@ -120,22 +156,6 @@ def build_messages(text: str, history: Sequence[str] = ()) -> list[dict[str, str
     return messages
 
 
-def _retry_after_seconds(response: httpx.Response) -> Optional[float]:
-    raw = response.headers.get("Retry-After")
-    if not raw:
-        return None
-    try:
-        return max(0.0, min(float(raw), 5.0))
-    except ValueError:
-        return None
-
-
-def _backoff(attempt: int, retry_after: Optional[float]) -> float:
-    if retry_after is not None:
-        return retry_after
-    return min(0.5 * (2 ** (attempt - 1)), 4.0)
-
-
 async def interpret_message(
     text: str,
     *,
@@ -165,59 +185,65 @@ async def interpret_message(
 
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=10.0)
-    try:
-        last_error: Optional[AIServiceError] = None
-        for attempt in range(1, max_attempts + 1):
-            started = time.monotonic()
-            try:
-                response = await http.post(url, headers=headers, json=payload)
-            except httpx.RequestError as exc:
-                last_error = AIServiceError(f"Error de red al llamar a la IA: {exc}")
-                if attempt >= max_attempts:
-                    raise last_error from exc
-                await asyncio.sleep(_backoff(attempt, None))
-                continue
 
-            duration_ms = int((time.monotonic() - started) * 1000)
+    async def _attempt() -> AIResult:
+        # Un intento completo: llamada HTTP + comprobación de estado + parseo.
+        # Los fallos temporales se lanzan como AIServiceError (retryable=True);
+        # el parseo/validación lanza AIInvalidOutput (retryable=False) para no reintentar.
+        started = time.monotonic()
+        try:
+            response = await http.post(url, headers=headers, json=payload)
+        except httpx.RequestError as exc:
+            # Fallo de red: se convierte a error propio para que tenacity lo reintente.
+            raise AIServiceError(f"Error de red al llamar a la IA: {exc}") from exc
 
-            if response.status_code in _RETRYABLE_STATUS:
-                last_error = AIServiceError(
-                    f"La IA no está disponible (HTTP {response.status_code})."
-                )
-                if attempt >= max_attempts:
-                    raise last_error
-                await asyncio.sleep(
-                    _backoff(attempt, _retry_after_seconds(response))
-                )
-                continue
+        duration_ms = int((time.monotonic() - started) * 1000)
 
-            if response.status_code != 200:
-                raise AIServiceError(
-                    f"Respuesta inesperada de la IA (HTTP {response.status_code})."
-                )
-
-            try:
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
-            except (ValueError, KeyError, IndexError, TypeError) as exc:
-                raise AIInvalidOutput(
-                    "La IA devolvió una estructura de chat inesperada."
-                ) from exc
-
-            interpretation = parse_content(content)
-            usage = data.get("usage") or {}
-            return AIResult(
-                intent=interpretation["intent"],
-                requested_time=interpretation["requested_time"],
-                language=interpretation["language"],
-                request_id=response.headers.get("X-Request-ID"),
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                duration_ms=duration_ms,
+        if response.status_code in _RETRYABLE_STATUS:
+            # Fallo temporal: reintentable y respetando Retry-After si viene.
+            raise AIServiceError(
+                f"La IA no está disponible (HTTP {response.status_code}).",
+                retry_after=_retry_after_seconds(response),
             )
 
-        # Inalcanzable, pero deja claro el contrato de error.
-        raise last_error or AIServiceError("No se pudo contactar con la IA.")
+        if response.status_code != 200:
+            # Estado inesperado y no temporal (400/401/403/404...): no se reintenta.
+            raise AIServiceError(
+                f"Respuesta inesperada de la IA (HTTP {response.status_code}).",
+                retryable=False,
+            )
+
+        try:
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise AIInvalidOutput(
+                "La IA devolvió una estructura de chat inesperada."
+            ) from exc
+
+        interpretation = parse_content(content)
+        usage = data.get("usage") or {}
+        return AIResult(
+            intent=interpretation["intent"],
+            requested_time=interpretation["requested_time"],
+            language=interpretation["language"],
+            request_id=response.headers.get("X-Request-ID"),
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            duration_ms=duration_ms,
+        )
+
+    # Bucle de reintento con tenacity en versión async (no bloquea el event loop).
+    # reraise=True propaga el AIServiceError original al agotar los intentos;
+    # sin reraise lanzaría RetryError y rompería el mapeo de errores.
+    retryer = AsyncRetrying(
+        stop=stop_after_attempt(max_attempts),
+        wait=_wait,
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    try:
+        return await retryer(_attempt)
     finally:
         if owns_client:
             await http.aclose()

@@ -69,7 +69,7 @@ async def app_error_handler(request: Request, exc: AppError):
 @app.exception_handler(AIServiceError)
 async def _ai_error(request: Request, exc: AIServiceError):
     invalida = isinstance(exc, AIInvalidOutput)
-    return _error(502 if invalida else 503, "ai_invalid_output" if invalida else "ai_unavailable", str(exc))
+    return _error(502 if isinstance(exc, AIInvalidOutput) else 503, exc.code, str(exc))
 
 #Manejador global para ReservationServiceError
 @app.exception_handler(ReservationServiceError)
@@ -109,7 +109,7 @@ app.add_middleware(
 
 # Ruta health para verificar estado del servicio
 @app.get("/health", tags=["System"])
-def health_check():
+def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
