@@ -63,13 +63,7 @@ app = FastAPI(
 #Manejador global para expeciones de tipo AppError
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError):
-    #401 añadimos WWW-Authenticate: Bearer
-    headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
-        headers=headers
-    )
+    return _error(exc.status_code, exc.code, exc.message)
 
 #Red de seguridad, nada escapa como 500 sin explicacion
 @app.exception_handler(AIServiceError)
