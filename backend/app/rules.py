@@ -26,7 +26,7 @@ class ResolvedPolicy:
     document_id: str
     org_id: str
     hotel_id: str
-    version: str
+    version: int
     content: str
     normal_checkout: str
     late_checkout_limit: str
@@ -52,7 +52,7 @@ def load_documents(path: Path = DEFAULT_DOCUMENTS_PATH) -> list[dict[str, Any]]:
     return docs
 
 def resolve_hotel_policy(
-        org_id: str, hotel_id: str, *, documents: list[dict[str, any]] | None = None, path: Path = DEFAULT_DOCUMENTS_PATH
+        org_id: str, hotel_id: str, *, documents: list[dict[str, Any]] | None = None, path: Path = DEFAULT_DOCUMENTS_PATH
         ) -> ResolvedPolicy:
     """Obtiene la unica politica aprobada, activa y de mayor version para el heusped"""
 
