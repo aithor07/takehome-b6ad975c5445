@@ -17,7 +17,8 @@ class ReservationServiceError(Exception):
         self.status_code = status_code
         self.error_code = error_code
 
-class ReservationNotFoundError(Exception):
+#Corregido: No heradaba de ReservationServiceError
+class ReservationNotFoundError(ReservationServiceError):
     #La reserva u operacion no existe o es ajena (http 403/404)
     pass
 
