@@ -1,6 +1,8 @@
 from collections.abc import Generator
 from sqlmodel import Session, SQLModel, create_engine
 from app.config import settings
+from typing import Annotated
+from fastapi import Depends
 
 #Necesario en SQLite cuando se usa con FastAPI y SQLModel para evitar errores de concurrencia
 connect_args = {"check_same_thread": False}
@@ -15,3 +17,11 @@ def create_db_and_tables() -> None:
 def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
+
+#Dependencia que se usara en rutas
+SessionDep = Annotated[Session, Depends(get_session)]
+
+def reset_database() -> None:
+    #Para test reset_before_case de casos-publicos.jsonl.
+    SQLModel.metadata.drop_all(engine)
+    SQLModel.metadata.create_all(engine)

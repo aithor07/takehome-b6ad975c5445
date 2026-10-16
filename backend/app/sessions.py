@@ -6,8 +6,9 @@ from app.config import settings
 import json
 from pathlib import Path
 from typing import Optional, Annotated
-from fastapi import Security
+from fastapi import Security, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 
 
 
@@ -111,7 +112,9 @@ def require_manager(session: Annotated[SessionIdentity, Security(get_current_ses
     return session
 
 
-    
-
+#Dependencias que usaran las rutas
+SessionIdentityDep = Annotated[SessionIdentity, Security(get_current_session)]
+GuestDep = Annotated[SessionIdentity, Depends(require_guest)]
+ManagerDep = Annotated[SessionIdentity, Depends(require_manager)]
 
     
