@@ -33,10 +33,16 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 class AIServiceError(Exception):
     """Fallo temporal o de transporte al llamar a la IA (reintentable)."""
+    def __init__(self, message: str, *, code: str = "ai_unavailable") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 
 class AIInvalidOutput(AIServiceError):
     """La IA respondió algo inutilizable (no reintentable: hay que validar)."""
+    def __init__(self, message, *, code = "ai_invalid_output") -> None:
+        super().__init__(message, code=code)
 
 
 @dataclass
