@@ -26,7 +26,7 @@ from tenacity import (
 
 from app.config import WORKFACTORY_USER_AGENT, settings
 
-# --- Validación de la interpretación -------------------------------------
+# Validación de la interpretación 
 
 VALID_INTENT = "late_checkout"
 VALID_LANGUAGES = {"es", "en"}

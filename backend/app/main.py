@@ -68,7 +68,6 @@ async def app_error_handler(request: Request, exc: AppError):
 #Red de seguridad, nada escapa como 500 sin explicacion
 @app.exception_handler(AIServiceError)
 async def _ai_error(request: Request, exc: AIServiceError):
-    invalida = isinstance(exc, AIInvalidOutput)
     return _error(502 if isinstance(exc, AIInvalidOutput) else 503, exc.code, str(exc))
 
 #Manejador global para ReservationServiceError
