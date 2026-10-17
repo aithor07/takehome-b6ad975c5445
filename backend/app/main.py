@@ -12,7 +12,7 @@ from app.database import create_db_and_tables, SessionDep
 from app.reservations_client import ReservationServiceError
 from app.rules import PolicyContradictionError, PolicyNotFoundError
 from app.sessions import AppError, GuestDep, ManagerDep
-from app.service import handle_message, list_proposals, approve_proposal
+from app.service import handle_message, list_proposals, approve_proposal, reject_proposal
 import app.models
 
 
@@ -135,7 +135,7 @@ async def post_message(payload: MessageIn, actor: GuestDep, db: SessionDep) -> d
     return await handle_message(actor, payload.model_dump(), db)
 
 #Ruta /api/proposals
-@app.get(_PREFIX+"proposals")
+@app.get(_PREFIX+"proposals", tags=["Proposals"])
 def read_proposals(actor: ManagerDep, db: SessionDep) -> dict[str, Any]:
     return list_proposals(actor, db) #Sincrono, no llama a nada remoto
 
@@ -145,3 +145,9 @@ async def approve_proposal_route(id: str, actor: ManagerDep, db: SessionDep, res
     code, body = await approve_proposal(actor, id, db)
     response.status_code = code
     return body
+
+#Ruta /api/proposals/{id}/reject
+#Sincrona, no hay llamadas remotas
+@app.post(_PREFIX + "proposals/{id}/reject", tags=["Proposals"])
+def reject_proposal_route(id: str, actor: ManagerDep, db: SessionDep) -> dict[str, Any]:
+    return reject_proposal(actor, id, db)

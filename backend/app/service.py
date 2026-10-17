@@ -403,3 +403,29 @@ async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session
     proposal.decision = "approve"
     db.add(proposal); db.commit()
     return 200, _decision_payload(proposal, "Cambio completado.")
+
+
+
+def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> dict[str, Any]:
+    proposal = db.get(Proposal, proposal_id)
+    #Existencia y pertenencia
+    if proposal is None or proposal.hotel_id != actor.hotel_id:
+        raise AppError(404, "proposal_not_found", "Propuesta no encontrada")
+
+    #Ya rechazada (idempotente mismo 200)
+    if proposal.status == ProposalStatus.rejected.value:
+        return _decision_payload(proposal, "La propuesta ya estaba rechazada")
+
+    #No rechazable: empezo a ejecutarse o ya termino
+    if proposal.status in (ProposalStatus.processing.value, ProposalStatus.pending_verification.value, ProposalStatus.completed.value):
+        raise AppError(409, "proposal_not_rejectable", "La propuesta ya no se puede rechazar")
+
+    #Rechazar
+    proposal.status = ProposalStatus.rejected.value
+    proposal.decided_by = actor.token
+    proposal.decided_at = datetime.now(timezone.utc)
+    proposal.decision = "reject"
+    proposal.updated_at = datetime.now(timezone.utc)
+    db.add(proposal)
+    db.commit()
+    return _decision_payload(proposal, "Propuesta rechazada")
