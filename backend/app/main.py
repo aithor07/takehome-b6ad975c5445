@@ -2,16 +2,21 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+from typing import Any
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 
 from app.ai_client import AIInvalidOutput, AIServiceError
-from app.database import create_db_and_tables
+from app.database import create_db_and_tables, SessionDep
 from app.reservations_client import ReservationServiceError
 from app.rules import PolicyContradictionError, PolicyNotFoundError
-from app.sessions import AppError
+from app.sessions import AppError, GuestDep
+from app.service import handle_message
 import app.models
+
+
+_PREFIX = "/api/"
 
 
 @asynccontextmanager
@@ -110,5 +115,21 @@ app.add_middleware(
 @app.get("/health", tags=["System"])
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+#Contrato exacto que debe seguir un mensaje
+class MessageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid") #Extra forbid cualquier campo no contemplado
+
+    event_id: str
+    conversation_id: str
+    stay_id: str
+    text: str
+
+
+#Ruta /api/messages
+@app.post(_PREFIX+"messages", tags=["Messages"])
+async def post_message(payload: MessageIn, actor: GuestDep, db: SessionDep) -> dict[str, Any]:
+    return await handle_message(actor, payload.model_dump(), db)
 
 
