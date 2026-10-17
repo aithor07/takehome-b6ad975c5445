@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlmodel import Session, select
-
+from datetime import datetime, timezone
 from app.ai_client import AIInvalidOutput, AIResult, AIServiceError, interpret_message
 from app.models import (
     Conversation,
@@ -12,7 +12,15 @@ from app.models import (
     ProposalStatus,
     TraceRecord,
 )
-from app.reservations_client import check_availability, get_stay
+from app.reservations_client import (
+    apply_change,
+    check_availability,
+    get_stay,
+    ReservationConflictError,
+    ReservationRejectedError,
+    ReservationServiceError,
+    ReservationUncertainError,
+)
 from app.rules import (
     PolicyContradictionError,
     PolicyNotFoundError,
@@ -298,6 +306,13 @@ def _proposal_payload(p: Proposal) -> dict[str, Any]:
         "receipt": p.receipt,            # null hasta que esté comprobada
     }
 
+def _marcar_stale(db: Session, proposal: Proposal) -> None:
+    #Marca la propuesta como no ejecutable y la persiste
+    proposal.status = ProposalStatus.stale.value
+    proposal.updated_at = datetime.now(timezone.utc)
+    db.add(proposal)
+    db.commit()
+
 
 def list_proposals(actor: SessionIdentity, db: Session) -> dict[str, Any]:
     #ManagerDep en la ruta ya garantiza el check de identidad
@@ -312,3 +327,79 @@ def list_proposals(actor: SessionIdentity, db: Session) -> dict[str, Any]:
     return {"proposals": [_proposal_payload(p) for p in propuestas]}
     
 
+
+
+def _decision_payload(p: Proposal, message: str) -> dict[str, Any]:
+    return {"proposal_id": p.id, "status": p.status, "message": message, "receipt": p.receipt}
+
+
+async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tuple[int, dict[str, Any]]:
+    #Comprobar existencia y pertenencia sin revelar ajenas
+    proposal = db.get(Proposal, proposal_id)
+    if proposal is None or proposal.hotel_id != actor.hotel_id:
+        raise AppError(404, "proposal_not_found", "Propuesta no encontrada")
+
+    #Estados no ejecutables
+    if proposal.status == ProposalStatus.completed.value:
+        return 200, _decision_payload(proposal, "La propuesta ya estaba completada")
+    if proposal.status == ProposalStatus.rejected.value:
+        raise AppError(409, "proposal_rejected", "La propuesta fue rechazada")
+    if proposal.status == ProposalStatus.processing.value:
+        raise AppError(409, "proposal_processing", "La propuesta se esta ejecutando")
+    if proposal.status == ProposalStatus.stale.value:
+        raise AppError(409, "proposal_stale", "La propuesta ya no es valida")
+
+    #Revalidacion, los datos pueden haber cambiado desde que se creo
+    try:
+        stay = await get_stay(proposal.stay_id, token=actor.remote_reservations_token)
+        disp = await check_availability(proposal.stay_id, proposal.requested_checkout_at, token=actor.remote_reservations_token)
+    except ReservationServiceError:
+        raise AppError(503, "reservation_unavailable", "No se pudo comprobar la reserva")
+
+    try:
+        policy = resolve_hotel_policy(proposal.org_id, proposal.hotel_id)
+    except (PolicyNotFoundError, PolicyContradictionError):
+        _marcar_stale(db, proposal)
+        raise AppError(409, "policy_changed", "La politica del hotel cambio")
+    if (stay.version != proposal.expected_version
+        or not disp.available
+        or policy.version != proposal.policy_version
+        or policy.fee_eur != proposal.fee_eur
+        ):
+        _marcar_stale(db, proposal)
+        raise AppError(409, "proposal_stale", "Los datos cambiaron; la propuesta ya no es valida")
+    #Marcar antes de escribir
+    proposal.status = ProposalStatus.processing.value
+    proposal.updated_at = datetime.now(timezone.utc)
+    db.add(proposal)
+    db.commit()
+
+    # 5. Escribir (misma operation_key y expected_version de la propuesta)
+    try:
+        receipt = await apply_change(
+            proposal.stay_id, proposal.requested_checkout_at,
+            proposal.expected_version, proposal.operation_key,
+            manager_token=actor.remote_reservations_token,
+        )
+    except ReservationRejectedError:
+        # 503 simulated_rejection: no se escribio. Se puede reintentar.
+        proposal.status = ProposalStatus.awaiting_approval.value
+        db.add(proposal); db.commit()
+        raise AppError(409, "simulated_rejection", "El cambio no se aplicó; puedes reintentar.")
+    except ReservationUncertainError:
+        proposal.status = ProposalStatus.pending_verification.value
+        db.add(proposal); db.commit()
+        return 202, _decision_payload(proposal, "Resultado incierto; pendiente de comprobar.")
+    except ReservationConflictError as exc:
+        proposal.status = ProposalStatus.stale.value
+        db.add(proposal); db.commit()
+        raise AppError(409, exc.error_code or "reservation_conflict", "El cambio ya no es posible.")
+
+    # 6. Exito
+    proposal.receipt = receipt.to_dict()
+    proposal.status = ProposalStatus.completed.value
+    proposal.decided_by = actor.token
+    proposal.decided_at = datetime.now(timezone.utc)
+    proposal.decision = "approve"
+    db.add(proposal); db.commit()
+    return 200, _decision_payload(proposal, "Cambio completado.")

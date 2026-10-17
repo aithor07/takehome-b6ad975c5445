@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +12,10 @@ from app.database import create_db_and_tables, SessionDep
 from app.reservations_client import ReservationServiceError
 from app.rules import PolicyContradictionError, PolicyNotFoundError
 from app.sessions import AppError, GuestDep, ManagerDep
-from app.service import handle_message, list_proposals
+from app.service import handle_message, list_proposals, approve_proposal
 import app.models
+
+
 
 
 _PREFIX = "/api/"
@@ -137,4 +139,9 @@ async def post_message(payload: MessageIn, actor: GuestDep, db: SessionDep) -> d
 def read_proposals(actor: ManagerDep, db: SessionDep) -> dict[str, Any]:
     return list_proposals(actor, db) #Sincrono, no llama a nada remoto
 
-
+#Ruta /api/proposals/{id}/approve
+@app.post(_PREFIX+"proposals/{id}/approve", tags=["Proposals"])
+async def approve_proposal_route(id: str, actor: ManagerDep, db: SessionDep, response: Response) -> dict[str, Any]:
+    code, body = await approve_proposal(actor, id, db)
+    response.status_code = code
+    return body
