@@ -281,3 +281,34 @@ async def handle_message(actor: SessionIdentity, payload: dict[str, Any], db: Se
         "awaiting_approval", _msg_pendiente(lang, pedida, policy.fee_eur), proposal
     )
 
+
+#Helper reutilizable
+def _proposal_payload(p: Proposal) -> dict[str, Any]:
+    return {
+        "id": p.id,
+        "stay_id": p.stay_id,
+        "status": p.status,
+        "current_checkout_at": p.current_checkout_at,
+        "requested_checkout_at": p.requested_checkout_at,
+        "fee_eur": p.fee_eur,
+        "policy_document_id": p.policy_document_id,
+        "policy_version": p.policy_version,
+        "evidence": p.evidence,          # {document_id, version, quote}
+        "operation_key": p.operation_key,
+        "receipt": p.receipt,            # null hasta que esté comprobada
+    }
+
+
+def list_proposals(actor: SessionIdentity, db: Session) -> dict[str, Any]:
+    #ManagerDep en la ruta ya garantiza el check de identidad
+    #Solo las propuestas del hotel del responsable autenticado
+    propuestas = db.exec(
+        select(Proposal)
+        .where(Proposal.hotel_id == actor.hotel_id)
+        .order_by(Proposal.created_at)
+    ).all()
+
+    #El contrato exige la clave "proposals" y la proyeccion de _proposal_payload
+    return {"proposals": [_proposal_payload(p) for p in propuestas]}
+    
+

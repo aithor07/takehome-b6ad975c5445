@@ -11,8 +11,8 @@ from app.ai_client import AIInvalidOutput, AIServiceError
 from app.database import create_db_and_tables, SessionDep
 from app.reservations_client import ReservationServiceError
 from app.rules import PolicyContradictionError, PolicyNotFoundError
-from app.sessions import AppError, GuestDep
-from app.service import handle_message
+from app.sessions import AppError, GuestDep, ManagerDep
+from app.service import handle_message, list_proposals
 import app.models
 
 
@@ -131,5 +131,10 @@ class MessageIn(BaseModel):
 @app.post(_PREFIX+"messages", tags=["Messages"])
 async def post_message(payload: MessageIn, actor: GuestDep, db: SessionDep) -> dict[str, Any]:
     return await handle_message(actor, payload.model_dump(), db)
+
+#Ruta /api/proposals
+@app.get(_PREFIX+"proposals")
+def read_proposals(actor: ManagerDep, db: SessionDep) -> dict[str, Any]:
+    return list_proposals(actor, db) #Sincrono, no llama a nada remoto
 
 
