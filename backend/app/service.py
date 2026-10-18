@@ -17,6 +17,7 @@ from app.models import (
 from app.reservations_client import (
     apply_change,
     check_availability,
+    get_operation,
     get_stay,
     ReservationConflictError,
     ReservationRejectedError,
@@ -457,3 +458,108 @@ def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tu
     db.add(proposal)
     db.commit()
     return 200, _decision_payload(proposal, "Propuesta rechazada")
+
+
+
+
+def _trace_payload(t: TraceRecord) -> dict[str, Any]:
+    return {
+        "http_request_id": t.http_request_id,
+        "duration_ms": t.duration_ms,
+        "prompt_tokens": t.prompt_tokens,
+        "completion_tokens": t.completion_tokens,
+        "tokens_simulated": t.tokens_simulated,
+        "detail": t.detail,
+        "created_at": t.created_at.isoformat(),
+    }
+
+async def reconcile_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tuple(int. dict[str, Any]):
+    #Comprueba una escritura incierta usando la operation_key, nunca crea operacion nueva solo consullta la que ya existre
+    proposal = db.get(Proposal, proposal_id)
+    if proposal is None or proposal.hotel_id != actor.hotel_id:
+        raise AppError(404, "proposal_not_found", "Propuesta no encontrada")
+
+    # Estados definitivos: se devuelve su estado sin ejecutar nada.
+    if proposal.status in (ProposalStatus.completed.value, ProposalStatus.rejected.value):
+        return 200, _decision_payload(proposal, "La propuesta ya tiene un estado definitivo")
+
+    # Solo hay algo que reconciliar si la escritura quedo incierta.
+    if proposal.status != ProposalStatus.pending_verification.value:
+        return 200, _decision_payload(proposal, "No hay ninguna operacion que reconciliar")
+
+    try:
+        receipt = await get_operation(
+            proposal.operation_key, manager_token=actor.remote_reservations_token
+        )
+    except ReservationUncertainError:
+        # No se pudo comprobar: se conserva pending_verification.
+        return 202, _decision_payload(proposal, "No se pudo comprobar la operacion; sigue pendiente")
+
+    if receipt is None:
+        # Un 404 operation_not_found NO es prueba de fallo definitivo.
+        return 202, _decision_payload(proposal, "La operacion no consta; sigue pendiente de comprobar")
+
+    # Recibo valido: la escritura si ocurrio.
+    proposal.receipt = receipt.to_dict()
+    proposal.status = ProposalStatus.completed.value
+    proposal.decided_by = proposal.decided_by or actor.token
+    proposal.decided_at = proposal.decided_at or datetime.now(timezone.utc)
+    proposal.updated_at = datetime.now(timezone.utc)
+    db.add(proposal)
+    db.commit()
+    return 200, _decision_payload(proposal, "Cambio confirmado tras reconciliar")
+
+
+def get_conversation(actor: SessionIdentity, conversation_id: str, db: Session) -> dict[str, Any]:
+    #Historial y estado de una conversacion, solo acceden huesped propietario y manager
+    candidatas = db.exec(
+        select(Conversation).where(Conversation.conversation_id == conversation_id)
+    ).all()
+
+    if actor.role == "guest":
+        conversation = next((c for c in candidatas if c.owner_token == actor.token), None)
+    else:
+        conversation = next((c for c in candidatas if c.hotel_id == actor.hotel_id), None)
+
+    if conversation is None:
+        raise AppError(404, "conversation_not_found", "Conversacion no encontrada")
+
+    mensajes = db.exec(
+        select(MessageRecord)
+        .where(MessageRecord.conversation_pk == conversation.id)
+        .order_by(MessageRecord.created_at)
+    ).all()
+    propuestas = db.exec(
+        select(Proposal)
+        .where(Proposal.conversation_pk == conversation.id)
+        .order_by(Proposal.created_at)
+    ).all()
+
+    body: dict[str, Any] = {
+        "conversation_id": conversation.conversation_id,
+        "stay_id": conversation.stay_id,
+        "hotel_id": conversation.hotel_id,
+        "language": conversation.language,
+        "messages": [
+            {
+                "event_id": m.event_id,
+                "status": m.status,
+                "message": (m.response or {}).get("message"),
+                "proposal_id": m.proposal_id,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in mensajes
+        ],
+        "proposals": [_proposal_payload(p) for p in propuestas],
+    }
+
+    # Trazas internas solo para manager.
+    if actor.role == "manager":
+        trazas = db.exec(
+            select(TraceRecord)
+            .where(TraceRecord.conversation_pk == conversation.id)
+            .order_by(TraceRecord.created_at)
+        ).all()
+        body["traces"] = [_trace_payload(t) for t in trazas]
+
+    return body
