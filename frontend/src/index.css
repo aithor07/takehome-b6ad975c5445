@@ -1,1 +1,49 @@
 @import "tailwindcss";
+
+/* Tokens del plan de diseno: seis colores, una familia, un radio de sello. */
+@theme {
+  --color-tinta: #14273b;
+  --color-tinta-suave: #5a6875;
+  --color-cal: #e9edef;
+  --color-coral: #d2493a;
+  --color-sal: #1e6f63;
+  --color-violeta: #5b4c93;
+
+  --font-sans: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
+
+  /* El sello no es una pildora redondeada: es un rectangulo con esquina viva. */
+  --radius-sello: 2px;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-cal);
+    color: var(--color-tinta);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Los controles de formulario no heredan la tipografia por defecto. */
+  input,
+  textarea,
+  button,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-tinta);
+    outline-offset: 2px;
+  }
+
+  /* Suelo de calidad: si el sistema pide menos movimiento, no hay movimiento. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
