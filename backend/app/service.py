@@ -320,9 +320,21 @@ async def handle_message(actor: SessionIdentity, payload: dict[str, Any], db: Se
 
 
 #Helper reutilizable
-def _proposal_payload(p: Proposal) -> dict[str, Any]:
+def _mapa_conversaciones(db: Session, propuestas: list[Proposal]) -> dict[str, str]:
+    #La propuesta guarda la pk interna; el cliente necesita el conversation_id publico
+    pks = {p.conversation_pk for p in propuestas}
+    if not pks:
+        return {}
+    filas = db.exec(
+        select(Conversation.id, Conversation.conversation_id).where(Conversation.id.in_(pks))
+    ).all()
+    return {pk: conversation_id for pk, conversation_id in filas}
+
+
+def _proposal_payload(p: Proposal, conversation_id: str | None = None) -> dict[str, Any]:
     return {
         "id": p.id,
+        "conversation_id": conversation_id,
         "stay_id": p.stay_id,
         "status": p.status,
         "current_checkout_at": p.current_checkout_at,
@@ -353,7 +365,9 @@ def list_proposals(actor: SessionIdentity, db: Session) -> dict[str, Any]:
     ).all()
 
     #El contrato exige la clave "proposals" y la proyeccion de _proposal_payload
-    return {"proposals": [_proposal_payload(p) for p in propuestas]}
+    #El Detalle del responsable necesita el conversation_id para pedir las trazas.
+    mapa = _mapa_conversaciones(db, propuestas)
+    return {"proposals": [_proposal_payload(p, mapa.get(p.conversation_pk)) for p in propuestas]}
     
 
 
@@ -550,7 +564,7 @@ def get_conversation(actor: SessionIdentity, conversation_id: str, db: Session) 
             }
             for m in mensajes
         ],
-        "proposals": [_proposal_payload(p) for p in propuestas],
+        "proposals": [_proposal_payload(p, conversation.conversation_id) for p in propuestas],
     }
 
     # Trazas internas solo para manager.
