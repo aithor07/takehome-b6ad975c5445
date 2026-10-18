@@ -164,5 +164,5 @@ async def reconcile_proposal_route(id: str, actor: ManagerDep, db: SessionDep, r
 #Ruta /api/conversations/{conversation_id}
 #Huesped propietario o manager del hotel, trazas solo para manager
 @app.get(_PREFIX+"conversations/{conversation_id}", tags=["Conversations"])
-def read_conversation(conversation_id: str, actor: SessionIdentityDep, db: SessionDep) -> dict[str. Any]:
+def read_conversation(conversation_id: str, actor: SessionIdentityDep, db: SessionDep) -> dict[str, Any]:
     return get_conversation(actor, conversation_id, db)

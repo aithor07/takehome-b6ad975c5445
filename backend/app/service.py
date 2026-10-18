@@ -473,7 +473,7 @@ def _trace_payload(t: TraceRecord) -> dict[str, Any]:
         "created_at": t.created_at.isoformat(),
     }
 
-async def reconcile_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tuple(int. dict[str, Any]):
+async def reconcile_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tuple[int, dict[str, Any]]:
     #Comprueba una escritura incierta usando la operation_key, nunca crea operacion nueva solo consullta la que ya existre
     proposal = db.get(Proposal, proposal_id)
     if proposal is None or proposal.hotel_id != actor.hotel_id:
