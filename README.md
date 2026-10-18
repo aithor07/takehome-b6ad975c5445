@@ -77,11 +77,69 @@ El backend mantiene un **registro de seguimiento** privado por turno (identifica
 petición de la IA, propuesta asociada, documentos usados, duración y tokens
 —marcados como simulados—). Nunca se muestra al huésped.
 
+### Rutas de la API
+
+Todas bajo el prefijo `/api`, con la sesión de demostración resuelta por cabecera y el
+rol comprobado en el servidor:
+
+| Método | Ruta | Quién | Qué hace |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Cualquiera | Estado del servicio (sin sesión). |
+| `POST` | `/api/messages` | Huésped | Un turno de conversación: interpreta el mensaje, comprueba reglas y disponibilidad, y crea la propuesta si procede. |
+| `GET` | `/api/proposals` | Responsable | Propuestas del hotel de la sesión, con `conversation_id`. |
+| `POST` | `/api/proposals/{id}/approve` | Responsable | Revalida y ejecuta el cambio; responde `200`, `202` o `409`. |
+| `POST` | `/api/proposals/{id}/reject` | Responsable | Rechaza la propuesta; nunca se ejecuta. |
+| `POST` | `/api/proposals/{id}/reconcile` | Responsable | Comprueba una escritura incierta; no crea operaciones nuevas. |
+| `GET` | `/api/conversations/{conversation_id}` | Responsable | Historial de la conversación y registro de la operación. |
+
 ### Frontend (`frontend/`)
 
-React 19 + Vite + TypeScript + Tailwind. **Pendiente de implementar**: por ahora es un
-esqueleto que consulta `/health`. Está previsto que consuma las rutas `/api/*` del
-backend y ofrezca las tres vistas del enunciado (huésped, responsable y detalle).
+React 19 + Vite + TypeScript + Tailwind 4, sin más dependencias que la fuente. Consume
+solo las rutas `/api/*` y ofrece las tres pantallas del enunciado.
+
+| Archivo | Responsabilidad |
+| --- | --- |
+| `src/api.ts` | Cliente HTTP tipado del contrato y traducción de errores a texto. |
+| `src/sessions.ts` | Sesiones de demostración del kit, sesión elegida y conversación de la estancia; la elección se guarda en el navegador. |
+| `src/presentation.ts` | Sello de estado, permisos por estado, formato de horas e importes y posiciones de la banda horaria. |
+| `src/TimeBand.tsx` | Banda del día con la salida actual y la pedida. |
+| `src/GuestView.tsx` | Pantalla del huésped: historial, redacción del mensaje y tarjeta de la solicitud. |
+| `src/ManagerView.tsx` | Pantalla del responsable: propuestas del hotel, decisión, comprobación y filtros. |
+| `src/ProposalDetail.tsx` | Pantalla de detalle: documento que respalda la propuesta y registro de la operación. |
+| `src/App.tsx` | Cabecera, estado del backend, pestañas de rol y selector de sesión. |
+| `src/index.css` | Tokens de color y tipografía, y capa base (foco visible, movimiento reducido). |
+| `src/main.tsx` | Arranque, fuente autoalojada y montaje de React. |
+
+```mermaid
+flowchart LR
+    APP[App.tsx: pestañas y sesión] --> GV[GuestView]
+    APP --> MV[ManagerView]
+    MV -->|capa de detalle| PD[ProposalDetail]
+    GV --> API[api.ts]
+    MV --> API
+    PD --> API
+    GV --> PR[presentation.ts]
+    MV --> PR
+    PD --> PR
+    API -->|/api/*| BE[Backend FastAPI]
+```
+
+Decisiones de interfaz que conviene conocer al leer el código:
+
+- **Una pantalla por rol, sin enrutador.** El detalle es una capa que solo se abre desde
+  la pantalla del responsable, así que la ruta de conversaciones queda
+  estructuralmente fuera del alcance del huésped.
+- **Un sello para el estado, con tres formas.** Relleno y girado para lo que espera una
+  acción (pendiente de aprobación, en ejecución, sin comprobar), contorno recto para lo
+  cerrado (completado, rechazado) y contorno discontinuo para lo que hay que rehacer
+  (obsoleta, fallo). El color acompaña, no es la única señal: forma y texto van con él.
+- **Nada se pinta como completado sin recibo del servicio.** Los textos de cada estado
+  son los que devuelve el servidor, no frases optimistas de la interfaz.
+- **Las horas se recortan del texto ISO en UTC** (`slice(11, 16)`), sin usar `Date`, para
+  que una salida a las 11:00 no aparezca como 13:00 según el huso del navegador.
+- **El registro de la operación** (duración, tokens simulados, `X-Request-ID` y recibo)
+  solo se pide con token de responsable: el backend no lo devuelve al huésped y la
+  pantalla del huésped no tiene forma de pedirlo.
 
 ## Estados
 
@@ -138,7 +196,8 @@ y `X-Test-Scenario`, que toma el valor de la variable de entorno del escenario e
 
 ### Servicio de reservas
 
-- Base: `RESERVATIONS_BASE_URL`; escenario: `RESERVATIONS_SCENARIO`.
+- Base: `RESERVATIONS_BASE_URL`; escenario: `RESERVATIONS_SCENARIO`, con los valores
+  `normal`, `transient-503`, `response-lost` y `stale-availability`.
 - Autenticación: `Authorization: Bearer <token>`, con un token **por sesión de
   demostración** resuelto en el servidor (el cliente no puede elegir token, hotel ni
   reserva).
@@ -161,6 +220,32 @@ y `X-Test-Scenario`, que toma el valor de la variable de entorno del escenario e
 
 ## Puesta en marcha
 
+### Requisitos previos
+
+Todo es local: no hay contenedores, ni servicios externos, ni base de datos que instalar.
+
+| Herramienta | Versión | Para qué |
+| --- | --- | --- |
+| **uv** | reciente (probado con 0.13.1; una versión muy antigua puede volver a resolver `backend/uv.lock`) | Crea el entorno del backend, instala las dependencias fijadas en `uv.lock` y ejecuta los comandos de este README. |
+| **Python** | 3.12 o superior (`requires-python` en `backend/pyproject.toml`) | Intérprete del backend. Si el del sistema es anterior, uv se encarga de descargarlo. |
+| **Node.js** | 20.19 o superior, o 22.12 o superior (lo exige Vite 8) | Ejecuta y construye el frontend. Incluye `npm`. |
+
+```bash
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Python 3.12, solo si el del sistema es anterior
+uv python install 3.12
+
+# Node.js 20 LTS
+nvm install 20          # o el instalador de nodejs.org
+```
+
+`uv sync` instala también el grupo `dev` (`pytest`, `pytest-asyncio` y `ruff`), que es el
+que hace falta para las pruebas. Si se prefiere no usar uv, el backend funciona igual con
+un entorno virtual normal —`python -m venv .venv`, activarlo e instalar el proyecto más
+esas tres herramientas—, pero los comandos de este documento suponen uv.
+
 Las pruebas y el servidor deben ejecutarse **desde `backend/`**, porque `.env` y la base
 de datos se resuelven de forma relativa a ese directorio.
 
@@ -180,6 +265,29 @@ cd frontend
 npm install
 npm run dev
 ```
+
+El frontend habla con `http://localhost:8000` por defecto; si el backend está en otro
+sitio, se cambia con `VITE_API_URL` en `frontend/.env`. No hay registro ni contraseña:
+la sesión de demostración se elige en la propia pantalla y solo decide qué hotel y qué
+reserva se ven, porque el rol y los permisos los comprueba siempre el servidor.
+
+### Recorrido para la demostración
+
+1. **Pestaña Huésped**, sesión *Huésped A1*: escribir «Quiero salir a las 14:00». Aparece
+   la solicitud con la reserva, la hora actual, la pedida, el importe y el documento que
+   la respalda, con el sello *Pendiente de aprobación*.
+2. **Pestaña Responsable**, sesión *Recepción Alba*: la propuesta aparece en la lista (se
+   sigue sola cada 5 s). **Aprobar** deja *Completado* con la referencia del cambio;
+   **Rechazar** no toca la reserva.
+3. **Detalle** (solo responsable): documento citado y registro de la operación, con
+   duración, tokens simulados, `X-Request-ID` y el recibo del servicio.
+4. **Cambio sin comprobar:** poniendo `RESERVATIONS_SCENARIO=response-lost` en
+   `backend/.env` y reiniciando, la aprobación responde `202` y la propuesta queda en
+   *Cambio sin comprobar* hasta pulsar **Comprobar sin confirmar**.
+5. **Obsoleta:** con `RESERVATIONS_SCENARIO=stale-availability`, la propuesta pasa a
+   *Requiere revisión* y el aviso dice que hay que pedirlo de nuevo.
+6. **IA caída:** con `LLM_SCENARIO=malformed-json` o `transient-503`, el huésped recibe
+   *Revisión humana* y no se crea ninguna propuesta.
 
 ## Base de datos
 
@@ -219,8 +327,11 @@ Automatizados los diez grupos de `datos/casos-publicos.jsonl` (agrupando variant
 ejecutados contra los servicios reales.
 
 ```
+uv run pytest
+============ 29 passed ============
+
 uv run pytest -m integration
-============ 18 passed, 1 skipped, 29 deselected ============
+============ 20 passed ============
 ```
 
 | Caso | Nombre | Resultado |
@@ -232,7 +343,7 @@ uv run pytest -m integration
 | P05 | Inyección en mensaje y documento | Verificado |
 | P06 | Aislamiento y rol | Verificado |
 | P07 | Duplicados y carrera | Verificado (duplicados sí; la carrera se probó en secuencia) |
-| P08 | Resultado incierto y reinicio | Pendiente: requiere `reconcile` |
+| P08 | Resultado incierto y reinicio | Verificado (`response-lost` y `transient-503`, con reconciliación) |
 | P09 | Propuesta obsoleta | Verificado (escenario `stale-availability` y variante de política) |
 | P10 | Modelo inválido y rechazo | Verificado (`invalid-time`, `malformed-json`, `privilege-fields`, `transient-503`) |
 
@@ -244,12 +355,14 @@ uv run pytest -m integration
 2. **El mensaje de derivación salía siempre en español.** Con la IA caída, un huésped
    que escribía en inglés recibía la respuesta en español. Se corrigió recordando el
    idioma de la conversación y, si no lo había, estimándolo del texto.
-
-### Pendiente
-
-- **P08** (`response-lost` y `transient-503` con reinicio): falta la ruta
-  `POST /api/proposals/{id}/reconcile`. Su prueba existe marcada como `skip`.
-- **`GET /api/conversations/{conversation_id}`**: ruta del contrato aún no implementada.
+3. **El historial del huésped solo mostraba las respuestas del hotel.**
+   `get_conversation` proyectaba los mensajes sin el texto del huésped, así que su lado
+   de la conversación aparecía vacío. Se corrigió incluyendo el texto en la proyección y
+   se comprobó sobre las claves que devuelve cada mensaje.
+4. **La lista de propuestas no decía a qué conversación pertenecía cada una.** El detalle
+   necesita ese dato para pedir el historial. Se añadió `conversation_id` a la respuesta
+   resolviendo el mapa de conversaciones con **una sola consulta `IN`**, en lugar de una
+   consulta por propuesta.
 
 ## Límites y trabajo futuro
 
@@ -260,8 +373,18 @@ uv run pytest -m integration
   defecto configurable. Además, la detección del idioma la realiza el modelo remoto,
   que hoy solo reconoce español e inglés: añadir un idioma exige también soporte en el
   proveedor (o un detector propio).
-- **Frontend** sin implementar (esqueleto).
-- **Reconciliación** (`reconcile`) y la ruta de conversaciones, pendientes.
+- **Pruebas del frontend.** No hay pruebas automatizadas de los componentes. La
+  verificación hecha es tipado y compilación (`tsc -b`), construcción con Vite, un render
+  de humo del árbol completo en Node y la revisión manual del recorrido. Lo siguiente
+  sería cubrir con Vitest la lógica de `presentation.ts`, que es donde se concentran las
+  reglas de sellos y permisos.
+- **Del frontend, lo demás.** No hay enrutador ni estado global: con tres pantallas no
+  hacía falta, pero con más vistas habría que añadirlos. Tampoco se ha auditado con
+  lector de pantalla; hay foco visible, etiquetas y cierre con `Escape`, pero la
+  accesibilidad no está certificada.
+- **El seguimiento de cambios del responsable es un sondeo cada 5 s**, suficiente para
+  una demostración en la que las dos pantallas conviven. En producción sería un canal de
+  eventos o un refresco bajo demanda.
 - **Sin autenticación real** (sesiones de demostración) y **sin pagos**, por diseño de
   la prueba.
 
@@ -269,13 +392,13 @@ uv run pytest -m integration
 
 | Día | Tiempo | Trabajo |
 | --- | --- | --- |
-| 1 | 2 h 30 min | Estudio de requisitos y diseño de la arquitectura; esqueleto inicial con placeholders. |
-| 2 | 1 h 30 min | Mayor parte del backend (clientes de servicios, modelos y reglas), sin rutas ni orquestación. |
-| 3 | 1 h 30 min | Cierre del backend: rutas y capa de servicio (mensaje, propuesta, aprobación y rechazo) y pruebas. |
-| 4 | 1 h 30 min (previsto) | Frontend, documentación y pruebas exhaustivas. |
+| 1 | 2 h 30 min | Estudio de requisitos y diseño de la arquitectura; esqueleto inicial, sesiones, reglas y cliente de reservas con sus pruebas. |
+| 2 | 1 h 30 min | Unificación de errores y del formato de salida, reintentos con `tenacity` y corrección de los primeros fallos. |
+| 3 | 1 h 30 min | Capa de servicio y rutas de mensaje, listado, aprobación y rechazo. |
+| 4 | 2 h 30 min | Reconciliación y ruta de conversaciones con sus pruebas; frontend completo (tres pantallas, sistema de presentación y verificación); documentación. |
 
-Total dedicado: **5 h 30 min** en tres días; con el cuarto, **7 h**. El límite del
-enunciado es de 8 h.
+Total dedicado: **8 h** en cuatro de los cinco días naturales disponibles. El límite del
+enunciado es de 8 h. Los tiempos son aproximados y están redondeados a media hora.
 
 ## Decisiones
 

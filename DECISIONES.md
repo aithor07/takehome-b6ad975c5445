@@ -53,6 +53,10 @@ puntos:
 - Un resultado incierto (respuesta perdida) deja la propuesta en
   `pending_verification`, sin afirmar éxito ni fallo.
 
+Las decisiones de interfaz (una pantalla por rol y sin enrutador, el sello de estado con
+tres formas, y el registro de la operación reservado al responsable) están razonadas en
+la sección **Frontend** del README.
+
 ## 2. Ayuda de IA utilizada
 
 - **Herramienta**: OpenCode como *harness* de agente, con un modelo **Qwen 3.8 27B**
@@ -66,10 +70,18 @@ puntos:
     hacía falta un detalle concreto.
   - Acelerar la escritura de código repetitivo a partir de un ejemplo.
   - Redactar el README.md y DECISIONES.md bien formateados a partir de una plantilla en sucio.
-- **Frontend** (pendiente): está previsto usar la IA con *skills* para un diseño
-  acorde a los requisitos y al consumo del backend.
+- **Frontend**: se instaló una *skill* de diseño (`frontend-design`) en el propio
+  proyecto y se usó como guía de criterio, no como generador de estilos sueltos. De ella
+  salen la paleta corta, la familia tipográfica única y la idea del **sello de estado con
+  tres formas**; también sirvió para descartar de antemano lo que no queríamos
+  (degradados, tarjetas idénticas repetidas, iconos decorativos, animaciones de entrada).
+  El código de los ocho ficheros se revisó y se ajustó a mano, y **los ficheros de la
+  skill no forman parte de la entrega**: están en `.gitignore`.
 - Todo resultado generado con IA se **revisa y se justifica**: el enunciado permite
-  usar IA, pero exige comprobar el resultado y explicar el código entregado.
+  usar IA, pero exige comprobar el resultado y explicar el código entregado. Además de la
+  revisión a mano, el resultado se comprobó con el tipado y la construcción (`tsc -b` y
+  `vite build`), con un render de humo del árbol completo y con comprobaciones sobre la
+  lógica de presentación (sellos, permisos por estado y formato de horas).
 
 ## 3. Dos fallos reproducidos y corregidos
 
@@ -100,3 +112,7 @@ puntos:
   con un detector ligero (`app/language.py`), con español por defecto.
 - **Por qué**: el idioma del mensaje forma parte de la corrección de la respuesta;
   contestar en el idioma del huésped es parte del contrato del caso de ejemplo.
+
+Los otros dos fallos corregidos durante el trabajo —el historial del huésped llegaba
+incompleto y el listado de propuestas no decía a qué conversación pertenecía cada una—
+están descritos en el README, en «Fallos encontrados y corregidos».
