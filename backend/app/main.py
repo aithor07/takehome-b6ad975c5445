@@ -11,8 +11,8 @@ from app.ai_client import AIInvalidOutput, AIServiceError
 from app.database import create_db_and_tables, SessionDep
 from app.reservations_client import ReservationServiceError
 from app.rules import PolicyContradictionError, PolicyNotFoundError
-from app.sessions import AppError, GuestDep, ManagerDep
-from app.service import handle_message, list_proposals, approve_proposal, reject_proposal
+from app.sessions import AppError, GuestDep, ManagerDep, SessionIdentityDep
+from app.service import handle_message, list_proposals, approve_proposal, reject_proposal, reconcile_proposal, get_conversation
 import app.models
 
 
@@ -152,3 +152,17 @@ def reject_proposal_route(id: str, actor: ManagerDep, db: SessionDep, response: 
     code, body = reject_proposal(actor, id, db)
     response.status_code = code
     return body
+
+#Ruta /api/proposals/{id}/reconcile
+@app.post(_PREFIX+"proposals/{id}/reconcile", tags=["Proposals"])
+async def reconcile_proposal_route(id: str, actor: ManagerDep, db: SessionDep, response: Response) -> dict[str, Any]:
+    code, body = await reconcile_proposal(actor, id, db)
+    response.status_code = code
+    return body
+
+
+#Ruta /api/conversations/{conversation_id}
+#Huesped propietario o manager del hotel, trazas solo para manager
+@app.get(_PREFIX+"conversations/{conversation_id}", tags=["Conversations"])
+def read_conversation(conversation_id: str, actor: SessionIdentityDep, db: SessionDep) -> dict[str. Any]:
+    return get_conversation(actor, conversation_id, db)
