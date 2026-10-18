@@ -557,6 +557,8 @@ def get_conversation(actor: SessionIdentity, conversation_id: str, db: Session) 
         "messages": [
             {
                 "event_id": m.event_id,
+                #Lo que escribio el huesped: sin esto el historial solo tendria las respuestas
+                "text": m.text,
                 "status": m.status,
                 "message": (m.response or {}).get("message"),
                 "proposal_id": m.proposal_id,
