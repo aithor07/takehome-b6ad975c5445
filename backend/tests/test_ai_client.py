@@ -34,7 +34,9 @@ def test_valid_spanish():
 
 def test_valid_english():
     result = parse_content(
-        json.dumps({"intent": "late_checkout", "requested_time": "14:00", "language": "en"})
+        json.dumps(
+            {"intent": "late_checkout", "requested_time": "14:00", "language": "en"}
+        )
     )
     assert result["language"] == "en"
     assert result["requested_time"] == "14:00"

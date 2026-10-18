@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import httpx
 from tenacity import (
@@ -26,7 +27,7 @@ from tenacity import (
 
 from app.config import WORKFACTORY_USER_AGENT, settings
 
-# Validación de la interpretación 
+# Validación de la interpretación
 
 VALID_INTENT = "late_checkout"
 VALID_LANGUAGES = {"es", "en"}
@@ -41,16 +42,25 @@ _MAX_WAIT = 5.0
 
 class AIServiceError(Exception):
     """Fallo temporal o de transporte al llamar a la IA (reintentable)."""
-    def __init__(self, message: str, *, code: str = "ai_unavailable", retryable: bool = True, retry_after: float | None = None) -> None:
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "ai_unavailable",
+        retryable: bool = True,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
-        self.retryable = retryable #tenacity solo reintenta si sigue en True
-        self.retry_after = retry_after #segundos del header Retry-After
+        self.retryable = retryable  # tenacity solo reintenta si sigue en True
+        self.retry_after = retry_after  # segundos del header Retry-After
 
 
 class AIInvalidOutput(AIServiceError):
     """La IA respondió algo inutilizable (no reintentable: hay que validar)."""
-    def __init__(self, message, *, code = "ai_invalid_output") -> None:
+
+    def __init__(self, message, *, code="ai_invalid_output") -> None:
         # No reintentable: repetir la llamada no arregla una salida inválida.
         super().__init__(message, code=code, retryable=False)
 
@@ -86,11 +96,11 @@ class AIResult:
     """Resultado válido de una interpretación."""
 
     intent: str
-    requested_time: Optional[str]
+    requested_time: str | None
     language: str
-    request_id: Optional[str] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
+    request_id: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     duration_ms: int = 0
 
 
@@ -105,10 +115,12 @@ def validate_interpretation(raw: Any) -> dict[str, Any]:
     if raw.get("intent") != VALID_INTENT:
         raise AIInvalidOutput("Intención no reconocida.")
 
+    # El campo es opcional: si viene, tiene que ser una hora con formato valido.
     requested_time = raw.get("requested_time")
-    if requested_time is not None:
-        if not isinstance(requested_time, str) or not _TIME_RE.match(requested_time):
-            raise AIInvalidOutput("Hora solicitada inválida.")
+    if requested_time is not None and (
+        not isinstance(requested_time, str) or not _TIME_RE.match(requested_time)
+    ):
+        raise AIInvalidOutput("Hora solicitada inválida.")
 
     language = raw.get("language")
     if language not in VALID_LANGUAGES:
@@ -160,8 +172,8 @@ async def interpret_message(
     text: str,
     *,
     history: Sequence[str] = (),
-    scenario: Optional[str] = None,
-    client: Optional[httpx.AsyncClient] = None,
+    scenario: str | None = None,
+    client: httpx.AsyncClient | None = None,
     max_attempts: int = 3,
 ) -> AIResult:
     """Interpreta un mensaje con la IA simulada.

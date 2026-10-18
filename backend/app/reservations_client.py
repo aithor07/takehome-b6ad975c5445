@@ -1,47 +1,60 @@
 """
-    Cliente asíncrono para el servicio remoto de reservas, gestiona lecturas de estancia
-    comprobacion de disponibilidad, escritura de cambios con control de version ('expected_version)
-    e idempotencia ('operation_key'), y consulta de recibos
+Cliente asíncrono para el servicio remoto de reservas, gestiona lecturas de estancia
+comprobacion de disponibilidad, escritura de cambios con control de version ('expected_version)
+e idempotencia ('operation_key'), y consulta de recibos
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
+
 import httpx
+
 from app.config import WORKFACTORY_USER_AGENT, settings
 
+
 class ReservationServiceError(Exception):
-    #Error base al comunicarse con el servicio de reservas
-    def __init__(self, message: str, *, status_code: Optional[int] = None, error_code: Optional[str] = None) -> None:
+    # Error base al comunicarse con el servicio de reservas
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.error_code = error_code
 
-#Corregido: No heradaba de ReservationServiceError
+
+# Corregido: No heradaba de ReservationServiceError
 class ReservationNotFoundError(ReservationServiceError):
-    #La reserva u operacion no existe o es ajena (http 403/404)
+    # La reserva u operacion no existe o es ajena (http 403/404)
     pass
+
 
 class ReservationConflictError(ReservationServiceError):
     """
     Conflicto de negocio en el servicio remoto (http 409)
     version_conflict: la version de estancia cambio
     checkout_unavailable: ya no hay disponibilidad
-    operation_key_conflict: misma clave con distinto payload 
+    operation_key_conflict: misma clave con distinto payload
     """
-    pass
+
 
 class ReservationRejectedError(ReservationServiceError):
     """Fallo transitorio confirmado donde el servidor garantiza que NO escribió
     (HTTP 503 con error.code == simulated_rejection).
     """
-    pass
+
 
 class ReservationUncertainError(ReservationServiceError):
     """Corte de red, timeout o fallo al recibir la respuesta de POST /changes.
     No se si el cambio se aplicó: la propuesta debe pasar a pending_verification.
     """
-    pass
+
+
 @dataclass(frozen=True)
 class StayInfo:
     stay_id: str
@@ -50,12 +63,14 @@ class StayInfo:
     checkout_at: str
     version: int
 
+
 @dataclass(frozen=True)
 class AvailabilityResult:
     available: bool
-    reason: Optional[str]
+    reason: str | None
     stay_version: int
     requested_checkout_at: str
+
 
 @dataclass(frozen=True)
 class ChangeReceipt:
@@ -71,17 +86,20 @@ class ChangeReceipt:
             "checkout_at": self.checkout_at,
             "version": self.version,
             "operation_key": self.operation_key,
-            "change_id": self.change_id
+            "change_id": self.change_id,
         }
-def _headers(token: str, scenario: Optional[str] = None) -> dict[str, str]:
+
+
+def _headers(token: str, scenario: str | None = None) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "User-Agent": WORKFACTORY_USER_AGENT,
-        "X-Test-Scenario": scenario or settings.reservations_scenario
+        "X-Test-Scenario": scenario or settings.reservations_scenario,
     }
 
-def _extract_error(response: httpx.Response) -> tuple[Optional[str], str]:
+
+def _extract_error(response: httpx.Response) -> tuple[str | None, str]:
     """Extrae error.code, error.message del cuerpo JSON si existe"""
     try:
         data = response.json()
@@ -92,7 +110,14 @@ def _extract_error(response: httpx.Response) -> tuple[Optional[str], str]:
         pass
     return None, response.text or f"HTTP {response.status_code}"
 
-async def get_stay(stay_id: str, *, token: str, scenario: Optional[str] = None, client: Optional[httpx.AsyncClient] = None) -> StayInfo:
+
+async def get_stay(
+    stay_id: str,
+    *,
+    token: str,
+    scenario: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> StayInfo:
     """Obtiene los datos actuales de una reserva (GET /stays/{stay_id})."""
     url = f"{settings.reservations_base_url.rstrip('/')}/stays/{stay_id}"
     owns_client = client is None
@@ -101,34 +126,41 @@ async def get_stay(stay_id: str, *, token: str, scenario: Optional[str] = None, 
         try:
             resp = await http.get(url, headers=_headers(token, scenario))
         except httpx.RequestError as exc:
-            raise ReservationServiceError(f"Error de red al consultar estancia {stay_id}: {exc}") from exc
+            raise ReservationServiceError(
+                f"Error de red al consultar estancia {stay_id}: {exc}"
+            ) from exc
 
         if resp.status_code in (403, 404):
             code, msg = _extract_error(resp)
-            raise ReservationNotFoundError(msg, status_code=resp.status_code, error_code=code)
+            raise ReservationNotFoundError(
+                msg, status_code=resp.status_code, error_code=code
+            )
         if resp.status_code != 200:
             code, msg = _extract_error(resp)
-            raise ReservationServiceError(msg, status_code=resp.status_code, error_code=code)
-        
+            raise ReservationServiceError(
+                msg, status_code=resp.status_code, error_code=code
+            )
+
         data = resp.json()
         return StayInfo(
             stay_id=str(data["stay_id"]),
             hotel_id=str(data["hotel_id"]),
             room=str(data["room"]),
             checkout_at=str(data["checkout_at"]),
-            version=int(data["version"])
+            version=int(data["version"]),
         )
     finally:
         if owns_client:
             await http.aclose()
+
 
 async def check_availability(
     stay_id: str,
     requested_checkout_at: str,
     *,
     token: str,
-    scenario: Optional[str] = None,
-    client: Optional[httpx.AsyncClient] = None,
+    scenario: str | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AvailabilityResult:
     """Comprueba disponibilidad en el servicio remoto (POST /availability/check)."""
     url = f"{settings.reservations_base_url.rstrip('/')}/availability/check"
@@ -140,9 +172,7 @@ async def check_availability(
     http = client or httpx.AsyncClient(timeout=10.0)
     try:
         try:
-            resp = await http.post(
-                url, headers=_headers(token, scenario), json=payload
-            )
+            resp = await http.post(url, headers=_headers(token, scenario), json=payload)
         except httpx.RequestError as exc:
             raise ReservationServiceError(
                 f"Error de red al comprobar disponibilidad: {exc}"
@@ -179,8 +209,8 @@ async def apply_change(
     operation_key: str,
     *,
     manager_token: str,
-    scenario: Optional[str] = None,
-    client: Optional[httpx.AsyncClient] = None,
+    scenario: str | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> ChangeReceipt:
     """Aplica el cambio de salida (POST /changes) usando la clave del manager.
 
@@ -189,7 +219,11 @@ async def apply_change(
     - Si devuelve 503 con simulated_rejection -> ReservationRejectedError. Sabemos 100% que no se aplico
     - Si hay corte de conexión, timeout o respuesta rota/5xx incierto -> ReservationUncertainError (queda en pending_verification).
     """
-    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+    if (
+        isinstance(expected_version, bool)
+        or not isinstance(expected_version, int)
+        or expected_version < 1
+    ):
         raise ValueError("expected_version debe ser un entero positivo.")
 
     url = f"{settings.reservations_base_url.rstrip('/')}/changes"
@@ -229,9 +263,7 @@ async def apply_change(
         code, msg = _extract_error(resp)
 
         if resp.status_code == 409:
-            raise ReservationConflictError(
-                msg, status_code=409, error_code=code
-            )
+            raise ReservationConflictError(msg, status_code=409, error_code=code)
 
         if resp.status_code in (403, 404):
             raise ReservationNotFoundError(
@@ -239,9 +271,7 @@ async def apply_change(
             )
 
         if resp.status_code == 503 and code == "simulated_rejection":
-            raise ReservationRejectedError(
-                msg, status_code=503, error_code=code
-            )
+            raise ReservationRejectedError(msg, status_code=503, error_code=code)
 
         # Cualquier otro 5xx o caída durante la escritura es resultado incierto.
         raise ReservationUncertainError(
@@ -256,9 +286,9 @@ async def get_operation(
     operation_key: str,
     *,
     manager_token: str,
-    scenario: Optional[str] = None,
-    client: Optional[httpx.AsyncClient] = None,
-) -> Optional[ChangeReceipt]:
+    scenario: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> ChangeReceipt | None:
     """Consulta el estado de una operación por su operation_key (GET /operations/{key})
 
     - Si devuelve 200 con status == "applied" y recibo -> devuelve ChangeReceipt.
@@ -271,9 +301,7 @@ async def get_operation(
     http = client or httpx.AsyncClient(timeout=10.0)
     try:
         try:
-            resp = await http.get(
-                url, headers=_headers(manager_token, scenario)
-            )
+            resp = await http.get(url, headers=_headers(manager_token, scenario))
         except httpx.RequestError as exc:
             raise ReservationUncertainError(
                 f"Error de red al consultar operación {operation_key}: {exc}"

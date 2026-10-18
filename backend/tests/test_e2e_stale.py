@@ -15,7 +15,9 @@ pytestmark = pytest.mark.integration
 
 
 def _propuesta(client, proposal_id: str) -> dict[str, Any]:
-    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()[
+        "proposals"
+    ]
     return next(p for p in propuestas if p["id"] == proposal_id)
 
 
@@ -52,7 +54,10 @@ def test_p09_variante_politica_actualizada(client, estado_limpio, corpus):
 
     # La politica aprobada sube a v3 con otro importe antes de aprobar.
     for documento in corpus:
-        if documento.get("document_id") == "coral-alba-policy" and documento.get("version") == 2:
+        if (
+            documento.get("document_id") == "coral-alba-policy"
+            and documento.get("version") == 2
+        ):
             documento["version"] = 3
             documento["content"] = (
                 "Politica aprobada v3. Salida tardia hasta las 14:00 por 30 EUR."

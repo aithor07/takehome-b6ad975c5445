@@ -22,7 +22,9 @@ def test_p02_camino_completo(client, estado_limpio):
     )
 
     # Antes de aprobar: pendiente, sin recibo, con politica y precio correctos.
-    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()[
+        "proposals"
+    ]
     propuesta = next(p for p in propuestas if p["id"] == proposal_id)
     assert propuesta["status"] == "awaiting_approval"
     assert propuesta["receipt"] is None
@@ -64,7 +66,9 @@ def test_p06_aislamiento_y_rol(client, estado_limpio):
     )
 
     # manager-b solo ve su hotel: la propuesta de hotel-alba no aparece.
-    ajenas = client.get("/api/proposals", headers=sesion("manager-b")).json()["proposals"]
+    ajenas = client.get("/api/proposals", headers=sesion("manager-b")).json()[
+        "proposals"
+    ]
     assert all(p["id"] != proposal_id for p in ajenas)
 
     # El huesped no puede aprobar -> 403.
@@ -95,13 +99,19 @@ def test_p07_doble_aprobacion_un_solo_cambio(client, estado_limpio):
         stay_id="STAY-A1",
     )
 
-    primera = client.post(f"/api/proposals/{proposal_id}/approve", headers=sesion("manager-a"))
-    segunda = client.post(f"/api/proposals/{proposal_id}/approve", headers=sesion("manager-a"))
+    primera = client.post(
+        f"/api/proposals/{proposal_id}/approve", headers=sesion("manager-a")
+    )
+    segunda = client.post(
+        f"/api/proposals/{proposal_id}/approve", headers=sesion("manager-a")
+    )
 
     # Ambas 200 y el mismo cambio (la segunda es replay de la completada).
     assert primera.status_code == 200
     assert segunda.status_code == 200
-    assert primera.json()["receipt"]["change_id"] == segunda.json()["receipt"]["change_id"]
+    assert (
+        primera.json()["receipt"]["change_id"] == segunda.json()["receipt"]["change_id"]
+    )
 
 
 def test_p10_rechazo_bloquea_aprobacion(client, estado_limpio):

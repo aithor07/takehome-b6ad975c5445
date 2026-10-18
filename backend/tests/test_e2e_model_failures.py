@@ -54,12 +54,17 @@ def test_p10_campos_privilegiados_no_dan_permiso_ni_precio(client, escenario):
 
     # La IA mando approved/role/fee:0/hotel_id ajeno; nada de eso se respeta.
     if respuesta["proposal_id"]:
-        propuesta = next(p for p in _propuestas(client) if p["id"] == respuesta["proposal_id"])
+        propuesta = next(
+            p for p in _propuestas(client) if p["id"] == respuesta["proposal_id"]
+        )
         assert propuesta["fee_eur"] == 25  # el precio lo fija la politica, no la IA
         assert propuesta["status"] == "awaiting_approval"
 
     # Ni propuestas ni cambios en el hotel ajeno que la IA intento colar.
-    assert client.get("/api/proposals", headers=sesion("manager-b")).json()["proposals"] == []
+    assert (
+        client.get("/api/proposals", headers=sesion("manager-b")).json()["proposals"]
+        == []
+    )
 
 
 def test_p10_fallo_temporal_de_ia_no_finge_exito(client, escenario):
@@ -73,6 +78,8 @@ def test_p10_fallo_temporal_de_ia_no_finge_exito(client, escenario):
         assert _propuestas(client) == []
     else:
         # El reintento funciono: sigue pendiente de aprobacion, sin exito ficticio.
-        propuesta = next(p for p in _propuestas(client) if p["id"] == respuesta["proposal_id"])
+        propuesta = next(
+            p for p in _propuestas(client) if p["id"] == respuesta["proposal_id"]
+        )
         assert propuesta["status"] == "awaiting_approval"
         assert propuesta["receipt"] is None

@@ -8,11 +8,11 @@ un cambio ya aplicado.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -21,7 +21,7 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ProposalStatus(str, Enum):
@@ -51,7 +51,9 @@ class Conversation(SQLModel, table=True):
 
     __tablename__ = "conversations"
     __table_args__ = (
-        UniqueConstraint("owner_token", "conversation_id", name="uq_conversation_owner"),
+        UniqueConstraint(
+            "owner_token", "conversation_id", name="uq_conversation_owner"
+        ),
     )
 
     id: str = Field(default_factory=_uuid, primary_key=True)
@@ -62,7 +64,7 @@ class Conversation(SQLModel, table=True):
     hotel_id: str
     stay_id: str
     # Último idioma conocido de la conversación (para turnos con la IA caída).
-    language: Optional[str] = Field(default=None)
+    language: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -88,8 +90,8 @@ class MessageRecord(SQLModel, table=True):
     stay_id: str
     text: str
     status: str
-    proposal_id: Optional[str] = Field(default=None, index=True)
-    trace_id: Optional[str] = None
+    proposal_id: str | None = Field(default=None, index=True)
+    trace_id: str | None = None
     # Respuesta serializada para reproducir un duplicado idéntico.
     response: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_now)
@@ -122,12 +124,12 @@ class Proposal(SQLModel, table=True):
     operation_key: str = Field(index=True)
 
     status: str = Field(default=ProposalStatus.awaiting_approval.value, index=True)
-    receipt: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    receipt: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
 
     # Quién y cuándo aprobó/rechazó (auditoría).
-    decided_by: Optional[str] = None
-    decided_at: Optional[datetime] = None
-    decision: Optional[str] = None  # "approve" | "reject"
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    decision: str | None = None  # "approve" | "reject"
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
@@ -145,14 +147,14 @@ class TraceRecord(SQLModel, table=True):
     actor_token: str = Field(index=True)
     actor_role: str
     hotel_id: str
-    stay_id: Optional[str] = None
-    conversation_pk: Optional[str] = None
-    proposal_id: Optional[str] = None
+    stay_id: str | None = None
+    conversation_pk: str | None = None
+    proposal_id: str | None = None
 
-    http_request_id: Optional[str] = None  # X-Request-ID de la IA
-    duration_ms: Optional[int] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
+    http_request_id: str | None = None  # X-Request-ID de la IA
+    duration_ms: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     tokens_simulated: bool = True
 
     detail: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))

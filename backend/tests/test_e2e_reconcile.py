@@ -15,7 +15,9 @@ pytestmark = pytest.mark.integration
 
 
 def _propuesta(client, proposal_id: str) -> dict[str, Any]:
-    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()[
+        "proposals"
+    ]
     return next(p for p in propuestas if p["id"] == proposal_id)
 
 
@@ -71,7 +73,7 @@ def test_p08_resultado_incierto_y_reconciliacion(client, escenario):
     # Sigue habiendo un solo cambio: la clave no cambio.
     assert _propuesta(client, proposal_id)["operation_key"] == clave
 
-    
+
 def test_p08_variante_transient_503(client, escenario):
     escenario(reservations="transient-503")
     proposal_id = crear_propuesta(

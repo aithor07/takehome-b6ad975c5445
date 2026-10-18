@@ -121,8 +121,16 @@ def test_permisos_y_reserva_ajena(client, estado_limpio):
 
     # Reserva ajena -> 403 (sin revelar contenido).
     ajeno = dict(cuerpo, stay_id="STAY-B1")
-    assert client.post("/api/messages", headers=sesion("guest-a1"), json=ajeno).status_code == 403
+    assert (
+        client.post("/api/messages", headers=sesion("guest-a1"), json=ajeno).status_code
+        == 403
+    )
 
     # Campo no contemplado -> 422.
     con_extra = dict(cuerpo, role="manager")
-    assert client.post("/api/messages", headers=sesion("guest-a1"), json=con_extra).status_code == 422
+    assert (
+        client.post(
+            "/api/messages", headers=sesion("guest-a1"), json=con_extra
+        ).status_code
+        == 422
+    )

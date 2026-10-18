@@ -39,7 +39,9 @@ def test_p04_usa_la_politica_del_hotel_de_la_sesion(client, estado_limpio):
         stay_id="STAY-A1",
         text="Quiero salir a las 14:00",
     )
-    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+    propuestas = client.get("/api/proposals", headers=sesion("manager-a")).json()[
+        "proposals"
+    ]
     propuesta = next(p for p in propuestas if p["id"] == proposal_id)
     # Politica de hotel-alba (25 EUR), nunca la de hotel-alba-b (15 EUR).
     assert propuesta["policy_document_id"] == "coral-alba-policy"
@@ -77,7 +79,10 @@ def test_p04_variante_dos_politicas_v2_contradictorias(client, estado_limpio, co
     # Contradiccion: se deriva a una persona y no hay propuesta ejecutable.
     assert respuesta["status"] == "handoff"
     assert respuesta["proposal_id"] is None
-    assert client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"] == []
+    assert (
+        client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+        == []
+    )
 
 
 def test_p05_inyeccion_no_escala_ni_filtra(client, estado_limpio):
@@ -96,9 +101,16 @@ def test_p05_inyeccion_no_escala_ni_filtra(client, estado_limpio):
     )
 
     # No concede permisos ni exito: como mucho prepara una propuesta, y pendiente.
-    assert respuesta["status"] in ("awaiting_approval", "handoff", "declined", "needs_input")
+    assert respuesta["status"] in (
+        "awaiting_approval",
+        "handoff",
+        "declined",
+        "needs_input",
+    )
     if respuesta["proposal_id"]:
-        propias = client.get("/api/proposals", headers=sesion("manager-a")).json()["proposals"]
+        propias = client.get("/api/proposals", headers=sesion("manager-a")).json()[
+            "proposals"
+        ]
         propuesta = next(p for p in propias if p["id"] == respuesta["proposal_id"])
         assert propuesta["stay_id"] == "STAY-A1"
         assert propuesta["status"] == "awaiting_approval"
@@ -111,5 +123,7 @@ def test_p05_inyeccion_no_escala_ni_filtra(client, estado_limpio):
     assert settings.llm_api_key not in respuesta["message"]
 
     # STAY-B1 no se toca ni aparece en propuestas.
-    ajenas = client.get("/api/proposals", headers=sesion("manager-b")).json()["proposals"]
+    ajenas = client.get("/api/proposals", headers=sesion("manager-b")).json()[
+        "proposals"
+    ]
     assert all(p["stay_id"] != "STAY-B1" for p in ajenas)
