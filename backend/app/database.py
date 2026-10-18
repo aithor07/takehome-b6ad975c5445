@@ -3,6 +3,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.config import settings
 from typing import Annotated
 from fastapi import Depends
+import app.models
 
 #Necesario en SQLite cuando se usa con FastAPI y SQLModel para evitar errores de concurrencia
 connect_args = {"check_same_thread": False}

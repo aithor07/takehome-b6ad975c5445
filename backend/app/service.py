@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone
 from app.ai_client import AIInvalidOutput, AIResult, AIServiceError, interpret_message
+from app.language import detect_language
 from app.models import (
     Conversation,
     MessageRecord,
@@ -106,8 +108,34 @@ def _reply(
             response=body,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        #Otra peticion gano la carrera, devolver su resultado
+        db.rollback()
+        replay = _replay_si_existe(db, actor, conversation, payload)
+        if replay is not None:
+            return replay
+        raise AppError(409, "event_conflict", "Ese event_id ya se uso con otro contenido")
+    
     return body
+
+def _replay_si_existe(
+    db: Session, actor: SessionIdentity, conversation: Conversation, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Replay de un turno ya persistido; 409 si el event_id se reusó con otro contenido."""
+    previo = db.exec(select(MessageRecord).where(
+        MessageRecord.actor_token == actor.token,
+        MessageRecord.conversation_pk == conversation.id,
+        MessageRecord.event_id == payload["event_id"],
+    )).first()
+    if previo is None:
+        return None
+    if previo.stay_id == payload["stay_id"] and previo.text == payload["text"]:
+        respuesta = dict(previo.response)
+        respuesta["replayed"] = True
+        return respuesta
+    raise AppError(409, "event_conflict", "Ese event_id ya se uso con otro contenido")
 
 
 
@@ -134,6 +162,13 @@ def _load_or_create_conversation(
         db.commit()
         db.refresh(conversation)
     return conversation
+
+
+def _idioma_actual(conversation: Conversation, text: str) -> str:
+    """Idioma del turno: el ultimo aprendido de la conversacion o, si no, una estimacion."""
+    if conversation.language in ("es", "en"):
+        return conversation.language
+    return detect_language(text)
 
 
 #Textos por idiomas
@@ -196,21 +231,9 @@ async def handle_message(actor: SessionIdentity, payload: dict[str, Any], db: Se
     conversation = _load_or_create_conversation(db, actor, payload["conversation_id"], payload["stay_id"])
 
     #Idempotencia
-    previo = db.exec(select(MessageRecord).where(
-        MessageRecord.actor_token == actor.token,
-        MessageRecord.conversation_pk == conversation.id,
-        MessageRecord.event_id == payload["event_id"]
-    )).first()
-
-    if previo is not None:
-        identico = (previo.stay_id == payload["stay_id"] and previo.text == payload["text"])
-        if identico:
-            #Replay identico, conservamos identificadores
-            respuesta = dict(previo.response)
-            respuesta["replayed"] = True
-            return respuesta
-        #Mismo event_id con otro contenido
-        raise AppError(409, "event_conflict", "Ese event_id ya se uso con otro contenido")
+    replay = _replay_si_existe(db, actor, conversation, payload)
+    if replay is not None:
+        return replay
 
     #Historial del dialogo
     historial = [m.text for m in db.exec(select(MessageRecord).where(MessageRecord.conversation_pk == conversation.id).order_by(MessageRecord.created_at)).all()]
@@ -219,11 +242,17 @@ async def handle_message(actor: SessionIdentity, payload: dict[str, Any], db: Se
     try:
         lectura = await interpret_message(payload["text"], history=historial)
     except (AIServiceError, AIInvalidOutput):
-        #Fallo de IA o salida invalida: respuesta util sin cambios y sin 500
-        trace_id = _trace(db, actor, conversation, payload["stay_id"], detail={"ai": "unavailable"})
-        return _reply(db, actor, conversation, payload, "handoff", _msg_revision("es"), trace_id)
-    trace_id = _trace(db, actor, conversation, payload["stay_id"], result=lectura)
+        #Fallo de IA o salida invalida: respuesta util sin cambios y sin 500.
+        #La IA no dio idioma: reusamos el de la conversacion o lo estimamos.
+        lang = _idioma_actual(conversation, payload["text"])
+        trace_id = _trace(db, actor, conversation, payload["stay_id"], detail={"ai": "unavailable", "language": lang})
+        return _reply(db, actor, conversation, payload, "handoff", _msg_revision(lang), trace_id)
     lang = "en" if lectura.language == "en" else "es"
+    # Aprendemos el idioma de la conversacion para los turnos en que la IA falle.
+    conversation.language = lang
+    db.add(conversation)
+    db.commit()
+    trace_id = _trace(db, actor, conversation, payload["stay_id"], result=lectura, detail={"language": lang})
 
     def cerrado(status: str, texto: str, proposal: Proposal | None = None) -> dict[str, Any]:
         # Cierra el turno siempre por el mismo camino: traza + mensaje persistido.
@@ -282,8 +311,7 @@ async def handle_message(actor: SessionIdentity, payload: dict[str, Any], db: Se
     )
     proposal.operation_key = _operation_key(proposal.id)
     db.add(proposal)
-    db.commit()
-    db.refresh(proposal)
+    
 
     return cerrado(
         "awaiting_approval", _msg_pendiente(lang, pedida, policy.fee_eur), proposal
@@ -343,11 +371,11 @@ async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session
     if proposal.status == ProposalStatus.completed.value:
         return 200, _decision_payload(proposal, "La propuesta ya estaba completada")
     if proposal.status == ProposalStatus.rejected.value:
-        raise AppError(409, "proposal_rejected", "La propuesta fue rechazada")
+        return 409, _decision_payload(proposal, "La propuesta fue rechazada")
     if proposal.status == ProposalStatus.processing.value:
-        raise AppError(409, "proposal_processing", "La propuesta se esta ejecutando")
+        return 409, _decision_payload(proposal, "La propuesta se esta ejecutando")
     if proposal.status == ProposalStatus.stale.value:
-        raise AppError(409, "proposal_stale", "La propuesta ya no es valida")
+        return 409, _decision_payload(proposal, "La propuesta ya no es valida")
 
     #Revalidacion, los datos pueden haber cambiado desde que se creo
     try:
@@ -360,14 +388,14 @@ async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session
         policy = resolve_hotel_policy(proposal.org_id, proposal.hotel_id)
     except (PolicyNotFoundError, PolicyContradictionError):
         _marcar_stale(db, proposal)
-        raise AppError(409, "policy_changed", "La politica del hotel cambio")
+        return 409, _decision_payload(proposal, "La politica del hotel cambio")
     if (stay.version != proposal.expected_version
         or not disp.available
         or policy.version != proposal.policy_version
         or policy.fee_eur != proposal.fee_eur
         ):
         _marcar_stale(db, proposal)
-        raise AppError(409, "proposal_stale", "Los datos cambiaron; la propuesta ya no es valida")
+        return 409, _decision_payload(proposal, "Los datos cambiaron; la propuesta ya no es valida")
     #Marcar antes de escribir
     proposal.status = ProposalStatus.processing.value
     proposal.updated_at = datetime.now(timezone.utc)
@@ -385,15 +413,15 @@ async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session
         # 503 simulated_rejection: no se escribio. Se puede reintentar.
         proposal.status = ProposalStatus.awaiting_approval.value
         db.add(proposal); db.commit()
-        raise AppError(409, "simulated_rejection", "El cambio no se aplicó; puedes reintentar.")
+        return 409, _decision_payload(proposal, "El cambio no se aplicó; puedes reintentar.")
     except ReservationUncertainError:
         proposal.status = ProposalStatus.pending_verification.value
         db.add(proposal); db.commit()
         return 202, _decision_payload(proposal, "Resultado incierto; pendiente de comprobar.")
-    except ReservationConflictError as exc:
+    except ReservationConflictError:
         proposal.status = ProposalStatus.stale.value
         db.add(proposal); db.commit()
-        raise AppError(409, exc.error_code or "reservation_conflict", "El cambio ya no es posible.")
+        return 409, _decision_payload(proposal, "El cambio ya no es posible.")
 
     # 6. Exito
     proposal.receipt = receipt.to_dict()
@@ -406,7 +434,7 @@ async def approve_proposal(actor: SessionIdentity, proposal_id: str, db: Session
 
 
 
-def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> dict[str, Any]:
+def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> tuple[int, dict[str, Any]]:
     proposal = db.get(Proposal, proposal_id)
     #Existencia y pertenencia
     if proposal is None or proposal.hotel_id != actor.hotel_id:
@@ -414,11 +442,11 @@ def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> di
 
     #Ya rechazada (idempotente mismo 200)
     if proposal.status == ProposalStatus.rejected.value:
-        return _decision_payload(proposal, "La propuesta ya estaba rechazada")
+        return 200, _decision_payload(proposal, "La propuesta ya estaba rechazada")
 
     #No rechazable: empezo a ejecutarse o ya termino
     if proposal.status in (ProposalStatus.processing.value, ProposalStatus.pending_verification.value, ProposalStatus.completed.value):
-        raise AppError(409, "proposal_not_rejectable", "La propuesta ya no se puede rechazar")
+        return 409, _decision_payload(proposal, "La propuesta ya no se puede rechazar")
 
     #Rechazar
     proposal.status = ProposalStatus.rejected.value
@@ -428,4 +456,4 @@ def reject_proposal(actor: SessionIdentity, proposal_id: str, db: Session) -> di
     proposal.updated_at = datetime.now(timezone.utc)
     db.add(proposal)
     db.commit()
-    return _decision_payload(proposal, "Propuesta rechazada")
+    return 200, _decision_payload(proposal, "Propuesta rechazada")

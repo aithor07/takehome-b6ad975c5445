@@ -108,9 +108,8 @@ async def _validation_error(request: Request, exc: RequestValidationError):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Permitir todos los orígenes
-    allow_credentials=True,
     allow_methods=["*"],  # Permitir todos los métodos HTTP
-    allow_headers=["*"],  # Permitir todos los encabezados
+    allow_headers=["*"]  # Permitir todos los encabezados
 )
 
 # Ruta health para verificar estado del servicio
@@ -149,5 +148,7 @@ async def approve_proposal_route(id: str, actor: ManagerDep, db: SessionDep, res
 #Ruta /api/proposals/{id}/reject
 #Sincrona, no hay llamadas remotas
 @app.post(_PREFIX + "proposals/{id}/reject", tags=["Proposals"])
-def reject_proposal_route(id: str, actor: ManagerDep, db: SessionDep) -> dict[str, Any]:
-    return reject_proposal(actor, id, db)
+def reject_proposal_route(id: str, actor: ManagerDep, db: SessionDep, response: Response) -> dict[str, Any]:
+    code, body = reject_proposal(actor, id, db)
+    response.status_code = code
+    return body

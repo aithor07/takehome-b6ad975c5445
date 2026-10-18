@@ -2,7 +2,6 @@
 name = "backend"
 version = "0.1.0"
 description = "Backend para interpretar peticiones de late checkout con IA"
-readme = "README.md"
 authors = [
     { name = "Aithor", email = "aithorjose07@gmail.com" }
 ]
@@ -24,3 +23,10 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# Los tests marcados como "integration" llaman a los servicios reales:
+# necesitan red y el .env con claves, y mutan su estado remoto. Por eso no
+# se ejecutan por defecto. Para lanzarlos:  pytest -m integration
+markers = [
+    "integration: llama a los servicios reales (necesita red y claves del .env)",
+]
+addopts = "-m 'not integration'"

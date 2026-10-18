@@ -61,6 +61,8 @@ class Conversation(SQLModel, table=True):
     org_id: str
     hotel_id: str
     stay_id: str
+    # Último idioma conocido de la conversación (para turnos con la IA caída).
+    language: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=_now)
 
 
